@@ -1,0 +1,31 @@
+services:
+  # Service WebSocket Server
+  - type: web
+    name: ram-websocket-server
+    env: node
+    plan: free
+    buildCommand: cd server && npm install
+    startCommand: cd server && node index.js
+    envVars:
+      - key: PORT
+        value: 8090
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /health
+
+  # Service Client React
+  - type: web
+    name: ram-react-client
+    env: node
+    plan: free
+    buildCommand: cd client && npm install && npm run build
+    startCommand: cd client && npm start
+    envVars:
+      - key: PORT
+        value: 3002
+      - key: NODE_ENV
+        value: production
+    # Note: VITE_WS_HOST, VITE_TELEGRAM_TOKEN, VITE_TELEGRAM_CHAT_ID
+    # doivent être configurés manuellement dans les settings Render
+    # avec les valeurs réelles après le déploiement du serveur WebSocket
+
