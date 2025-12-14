@@ -475,11 +475,28 @@ export default function Dashboard() {
             <Text fontSize="sm" mb={2}>
               {wsError}
             </Text>
+            <Box
+              bg="rgba(255,255,255,0.5)"
+              borderRadius="8px"
+              p={3}
+              mt={3}
+              mb={3}>
+              <Text fontSize="xs" fontWeight="600" mb={1}>
+                🔍 Informations de diagnostic :
+              </Text>
+              <Text fontSize="xs" fontFamily="mono" mb={1}>
+                <strong>VITE_WS_HOST:</strong> {import.meta.env.VITE_WS_HOST || "non défini"}
+              </Text>
+              <Text fontSize="xs" fontFamily="mono">
+                <strong>URL tentée:</strong> {WS_URL}
+              </Text>
+            </Box>
             <Text fontSize="xs" color="#991b1b" mt={2}>
-              <strong>Solution:</strong> Assurez-vous que :
-              <br />• Le serveur WebSocket est démarré
-              <br />• La variable d'environnement VITE_WS_HOST est configurée dans Render
-              <br />• L'URL du WebSocket est correcte (ex: wss://votre-serveur.onrender.com)
+              <strong>Solution:</strong> Vérifiez que :
+              <br />• Le serveur WebSocket est démarré et "Live" sur Render
+              <br />• VITE_WS_HOST = <code>votre-serveur.onrender.com</code> (sans wss:// ou ws://)
+              <br />• Le service client a été redéployé après modification de VITE_WS_HOST
+              <br />• Consultez <code>VERIFIER_VITE_WS_HOST.md</code> pour plus de détails
             </Text>
           </Box>
         )}
@@ -493,11 +510,15 @@ export default function Dashboard() {
             border={`2px solid ${wsConnected ? "#16a34a" : "#f59e0b"}`}
             borderRadius="12px"
             px={4}
-            py={2}
-            textAlign="center">
-            <Text fontWeight="600" fontSize="sm">
+            py={2}>
+            <Text fontWeight="600" fontSize="sm" textAlign="center" mb={wsConnected ? 1 : 0}>
               {wsConnected ? "✅ Connecté au serveur WebSocket" : "⏳ Connexion en cours..."}
             </Text>
+            {wsConnected && (
+              <Text fontSize="xs" fontFamily="mono" textAlign="center" opacity={0.8}>
+                {WS_URL}
+              </Text>
+            )}
           </Box>
         )}
 
