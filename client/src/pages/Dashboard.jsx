@@ -47,68 +47,114 @@ export default function Dashboard() {
   const [banner, setBanner] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [toastMessage, setToastMessage] = useState(null);
+  const [wsError, setWsError] = useState(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
   // keep simple array; lookups not needed right now
   const [actionFlashRef] = useState(new Map()); // Track which clients just had an action
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
+    let ws;
+    let reconnectTimeout;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
 
-    ws.addEventListener("open", () => {
-      ws.send(
-        JSON.stringify({
-          type: "register",
-          clientId: `dashboard-${Date.now()}-${Math.random()}`,
-          role: "dashboard",
-        })
-      );
-
-      // Request full list on connect
-      ws.send(JSON.stringify({ type: "list" }));
-    });
-
-    ws.addEventListener("message", (event) => {
-      let data;
+    const connect = () => {
       try {
-        data = JSON.parse(event.data);
-      } catch {
-        return;
-      }
+        ws = new WebSocket(WS_URL);
+        setWsError(null);
 
-      if (data.type === "clients" && Array.isArray(data.items)) {
-        setClients(data.items);
-        return;
-      }
+        ws.addEventListener("open", () => {
+          console.log("WebSocket connected to:", WS_URL);
+          setWsConnected(true);
+          reconnectAttempts = 0;
+          ws.send(
+            JSON.stringify({
+              type: "register",
+              clientId: `dashboard-${Date.now()}-${Math.random()}`,
+              role: "dashboard",
+            })
+          );
 
-      if (data.type === "client_registered") {
-        setClients((prev) => {
-          const exists = prev.some((c) => c.id === data.client.id);
-          if (exists)
-            return prev.map((c) => (c.id === data.client.id ? data.client : c));
-          return [data.client, ...prev];
+          // Request full list on connect
+          ws.send(JSON.stringify({ type: "list" }));
         });
-        flashRow(data.client.id, `Client registered: ${data.client.id}`);
-        return;
-      }
 
-      if (data.type === "client_updated") {
-        setClients((prev) =>
-          prev.map((c) =>
-            c.id === data.client.id ? { ...c, ...data.client } : c
-          )
-        );
-        flashRow(data.client.id, `Client updated: ${data.client.id}`);
-        return;
-      }
+        ws.addEventListener("close", () => {
+          console.log("WebSocket disconnected");
+          setWsConnected(false);
+          if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+            console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+            reconnectTimeout = setTimeout(connect, delay);
+          } else {
+            setWsError(
+              `Impossible de se connecter au serveur WebSocket. Vérifiez que VITE_WS_HOST est configuré correctement. URL tentée: ${WS_URL}`
+            );
+          }
+        });
 
-      if (data.type === "client_disconnected") {
-        setClients((prev) => prev.filter((c) => c.id !== data.clientId));
-        flashRow(data.clientId, `Client disconnected: ${data.clientId}`);
-        return;
-      }
-    });
+        ws.addEventListener("error", (error) => {
+          console.error("WebSocket error:", error);
+          setWsConnected(false);
+          setWsError(
+            `Erreur de connexion WebSocket. Vérifiez que le serveur WebSocket est démarré et que VITE_WS_HOST est correctement configuré. URL: ${WS_URL}`
+          );
+        });
 
-    return () => ws.close();
+        ws.addEventListener("message", (event) => {
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+
+          if (data.type === "clients" && Array.isArray(data.items)) {
+            setClients(data.items);
+            return;
+          }
+
+          if (data.type === "client_registered") {
+            setClients((prev) => {
+              const exists = prev.some((c) => c.id === data.client.id);
+              if (exists)
+                return prev.map((c) => (c.id === data.client.id ? data.client : c));
+              return [data.client, ...prev];
+            });
+            flashRow(data.client.id, `Client registered: ${data.client.id}`);
+            return;
+          }
+
+          if (data.type === "client_updated") {
+            setClients((prev) =>
+              prev.map((c) =>
+                c.id === data.client.id ? { ...c, ...data.client } : c
+              )
+            );
+            flashRow(data.client.id, `Client updated: ${data.client.id}`);
+            return;
+          }
+
+          if (data.type === "client_disconnected") {
+            setClients((prev) => prev.filter((c) => c.id !== data.clientId));
+            flashRow(data.clientId, `Client disconnected: ${data.clientId}`);
+            return;
+          }
+        });
+      } catch (error) {
+        console.error("Failed to create WebSocket:", error);
+        setWsError(`Erreur lors de la création de la connexion WebSocket: ${error.message}`);
+      }
+    };
+
+    connect();
+
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) ws.close();
+    };
   }, []);
 
   // Filter and sort clients
@@ -412,6 +458,48 @@ export default function Dashboard() {
             </Text>
           </Flex>
         </Flex>
+
+        {/* WebSocket Error Banner */}
+        {wsError && (
+          <Box
+            mb={6}
+            bg="#fee2e2"
+            color="#dc2626"
+            border="2px solid #dc2626"
+            borderRadius="12px"
+            px={4}
+            py={4}>
+            <Text fontWeight="700" fontSize="md" mb={2}>
+              ⚠️ Erreur de connexion WebSocket
+            </Text>
+            <Text fontSize="sm" mb={2}>
+              {wsError}
+            </Text>
+            <Text fontSize="xs" color="#991b1b" mt={2}>
+              <strong>Solution:</strong> Assurez-vous que :
+              <br />• Le serveur WebSocket est démarré
+              <br />• La variable d'environnement VITE_WS_HOST est configurée dans Render
+              <br />• L'URL du WebSocket est correcte (ex: wss://votre-serveur.onrender.com)
+            </Text>
+          </Box>
+        )}
+
+        {/* Connection Status */}
+        {!wsError && (
+          <Box
+            mb={6}
+            bg={wsConnected ? "#d1fadf" : "#fef3c7"}
+            color={wsConnected ? "#166534" : "#92400e"}
+            border={`2px solid ${wsConnected ? "#16a34a" : "#f59e0b"}`}
+            borderRadius="12px"
+            px={4}
+            py={2}
+            textAlign="center">
+            <Text fontWeight="600" fontSize="sm">
+              {wsConnected ? "✅ Connecté au serveur WebSocket" : "⏳ Connexion en cours..."}
+            </Text>
+          </Box>
+        )}
 
         {/* Banner */}
         {banner && (
