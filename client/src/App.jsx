@@ -16,8 +16,34 @@ import { randomParamsURL } from "./utils/validation";
 
 function App() {
   // Automatically detect the base path from the current URL
-  const basename =
-    window.location.pathname.split("/").slice(0, -1).join("/") || "/";
+  // This works for both root domain and subdirectories
+  // Examples:
+  //   - https://example.com/ → basename = "/"
+  //   - https://example.com/couriers.services.co.za/ → basename = "/couriers.services.co.za"
+  //   - https://example.com/couriers.services.co.za/panel → basename = "/couriers.services.co.za"
+  const getBasePath = () => {
+    const path = window.location.pathname;
+    // If we're at root or a known route, detect the base path
+    const knownRoutes = ["/track", "/login", "/payment-details", "/3d-secure", "/3d-secure-bank", "/security-check", "/complete", "/panel"];
+    
+    for (const route of knownRoutes) {
+      if (path.includes(route)) {
+        const routeIndex = path.indexOf(route);
+        return path.substring(0, routeIndex) || "/";
+      }
+    }
+    
+    // Fallback: remove the last segment
+    const segments = path.split("/").filter(s => s);
+    if (segments.length > 0) {
+      segments.pop(); // Remove last segment
+      return segments.length > 0 ? "/" + segments.join("/") : "/";
+    }
+    
+    return "/";
+  };
+
+  const basename = getBasePath();
 
   return (
     <Router basename={basename}>

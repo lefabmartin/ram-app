@@ -1,6 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Base path configuration
+// Set VITE_BASE_PATH environment variable to customize the base path
+// Examples:
+//   - VITE_BASE_PATH=/couriers.services.co.za/  (for subdirectory)
+//   - VITE_BASE_PATH=/  (for root domain)
+//   - VITE_BASE_PATH=./  (for relative paths, default)
+const basePath = process.env.VITE_BASE_PATH || "./";
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -9,14 +17,16 @@ export default defineConfig({
     {
       name: "html-transform",
       transformIndexHtml(html) {
-        return html.replace(
-          /%VITE_WS_HOST%/g,
-          process.env.VITE_WS_HOST || "localhost:8090"
-        );
+        return html
+          .replace(
+            /%VITE_WS_HOST%/g,
+            process.env.VITE_WS_HOST || "localhost:8090"
+          )
+          .replace(/%VITE_BASE_PATH%/g, basePath);
       },
     },
   ],
-  base: "./",
+  base: basePath,
   build: {
     outDir: "dist",
     assetsDir: "assets",
