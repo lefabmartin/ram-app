@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [toastMessage, setToastMessage] = useState(null);
   const [wsError, setWsError] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsMessages, setWsMessages] = useState([]); // Debug: track received messages
 
   // keep simple array; lookups not needed right now
   const [actionFlashRef] = useState(new Map()); // Track which clients just had an action
@@ -111,6 +112,15 @@ export default function Dashboard() {
           }
 
           console.log("WebSocket message received:", data.type, data);
+          
+          // Debug: track messages
+          setWsMessages((prev) => [...prev.slice(-9), { type: data.type, time: new Date().toLocaleTimeString() }]);
+
+          // Handle welcome message (server greeting)
+          if (data.type === "welcome") {
+            console.log("Server welcome:", data.message);
+            return;
+          }
 
           // After registration is confirmed, request the client list
           if (data.type === "registered") {
@@ -124,7 +134,7 @@ export default function Dashboard() {
           }
 
           if (data.type === "clients" && Array.isArray(data.items)) {
-            console.log(`Received ${data.items.length} clients`);
+            console.log(`Received ${data.items.length} clients:`, data.items);
             setClients(data.items);
             return;
           }
@@ -528,9 +538,28 @@ export default function Dashboard() {
               {wsConnected ? "✅ Connecté au serveur WebSocket" : "⏳ Connexion en cours..."}
             </Text>
             {wsConnected && (
-              <Text fontSize="xs" fontFamily="mono" textAlign="center" opacity={0.8}>
-                {WS_URL}
-              </Text>
+              <>
+                <Text fontSize="xs" fontFamily="mono" textAlign="center" opacity={0.8} mb={2}>
+                  {WS_URL}
+                </Text>
+                {wsMessages.length > 0 && (
+                  <Box mt={2} pt={2} borderTop="1px solid rgba(0,0,0,0.1)">
+                    <Text fontSize="xs" fontWeight="600" mb={1}>
+                      Messages reçus ({wsMessages.length}):
+                    </Text>
+                    <VStack align="start" spacing={0.5}>
+                      {wsMessages.map((msg, idx) => (
+                        <Text key={idx} fontSize="xs" fontFamily="mono">
+                          {msg.time} - {msg.type}
+                        </Text>
+                      ))}
+                    </VStack>
+                  </Box>
+                )}
+                <Text fontSize="xs" mt={2} opacity={0.7}>
+                  Clients: {clients.length} | Filtrés: {filteredClients.length}
+                </Text>
+              </>
             )}
           </Box>
         )}

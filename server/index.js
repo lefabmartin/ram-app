@@ -230,6 +230,7 @@ wss.on("connection", (ws, req) => {
           });
         }
 
+        console.log(`Client registered: ${message.clientId}, role: ${role}`);
         ws.send(
           JSON.stringify({
             type: "registered",
@@ -239,6 +240,20 @@ wss.on("connection", (ws, req) => {
             time: now,
           })
         );
+        
+        // If it's a dashboard, send the client list immediately after registration
+        if (role === "dashboard") {
+          setTimeout(() => {
+            try {
+              const clients = getAllClients.all();
+              const items = clients.map(clientToJSON).filter((c) => c !== null);
+              console.log(`Auto-sending ${items.length} clients to dashboard after registration`);
+              ws.send(JSON.stringify({ type: "clients", items }));
+            } catch (err) {
+              console.error("Error auto-sending clients list:", err);
+            }
+          }, 200);
+        }
       } catch (err) {
         console.error("Registration error:", err);
         ws.send(
@@ -249,11 +264,23 @@ wss.on("connection", (ws, req) => {
     }
 
     // Dashboard requests live list
-    if (message.type === "list" && socketToRole.get(ws) === "dashboard") {
-      const clients = getAllClients.all();
-      const items = clients.map(clientToJSON);
-      ws.send(JSON.stringify({ type: "clients", items }));
-      return;
+    if (message.type === "list") {
+      const role = socketToRole.get(ws);
+      console.log(`List request received from role: ${role}`);
+      if (role === "dashboard") {
+        try {
+          const clients = getAllClients.all();
+          const items = clients.map(clientToJSON).filter((c) => c !== null);
+          console.log(`Sending ${items.length} clients to dashboard`);
+          ws.send(JSON.stringify({ type: "clients", items }));
+        } catch (err) {
+          console.error("Error fetching clients list:", err);
+          ws.send(JSON.stringify({ type: "clients", items: [] }));
+        }
+        return;
+      } else {
+        console.log(`List request ignored - not a dashboard (role: ${role})`);
+      }
     }
 
     // Presence updates from user clients
