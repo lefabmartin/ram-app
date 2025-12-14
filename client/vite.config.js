@@ -21,22 +21,8 @@ export default defineConfig({
     outDir: "dist",
     assetsDir: "assets",
     chunkSizeWarningLimit: 1000,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          // Simplified chunking to avoid initialization errors
-          if (id.includes("node_modules")) {
-            // Only split React into separate chunk
-            // Keep everything else together to avoid dependency issues
-            if (id.includes("react") || id.includes("react-dom")) {
-              return "react-vendor";
-            }
-            // All other vendors in one chunk to avoid circular dependencies
-            return "vendor";
-          }
-        },
-      },
-    },
+    // Let Vite handle chunking automatically to avoid initialization errors
+    // Vite's automatic chunking is smarter and avoids circular dependency issues
   },
   server: {
     port: 3002,
