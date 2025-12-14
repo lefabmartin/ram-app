@@ -14,25 +14,23 @@ export default defineConfig({
         manualChunks(id) {
           // Split node_modules into separate chunks
           if (id.includes("node_modules")) {
-            // React core libraries
+            // React core libraries - must be first
             if (id.includes("react") || id.includes("react-dom")) {
               return "react-vendor";
+            }
+            // Chakra UI, Emotion, and Framer Motion together
+            // They have tight dependencies and should be in the same chunk
+            if (
+              id.includes("@chakra-ui") ||
+              id.includes("@emotion") ||
+              id.includes("emotion") ||
+              id.includes("framer-motion")
+            ) {
+              return "ui-vendor";
             }
             // React Router
             if (id.includes("react-router")) {
               return "router-vendor";
-            }
-            // Chakra UI and Emotion
-            if (
-              id.includes("@chakra-ui") ||
-              id.includes("@emotion") ||
-              id.includes("emotion")
-            ) {
-              return "chakra-vendor";
-            }
-            // Framer Motion
-            if (id.includes("framer-motion")) {
-              return "framer-vendor";
             }
             // React Icons
             if (id.includes("react-icons")) {
