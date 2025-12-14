@@ -75,9 +75,7 @@ export default function Dashboard() {
               role: "dashboard",
             })
           );
-
-          // Request full list on connect
-          ws.send(JSON.stringify({ type: "list" }));
+          // Don't send "list" immediately - wait for "registered" confirmation
         });
 
         ws.addEventListener("close", () => {
@@ -107,11 +105,26 @@ export default function Dashboard() {
           let data;
           try {
             data = JSON.parse(event.data);
-          } catch {
+          } catch (err) {
+            console.error("Failed to parse WebSocket message:", err);
+            return;
+          }
+
+          console.log("WebSocket message received:", data.type, data);
+
+          // After registration is confirmed, request the client list
+          if (data.type === "registered") {
+            console.log("Dashboard registered successfully, requesting client list");
+            // Small delay to ensure server is ready
+            setTimeout(() => {
+              console.log("Sending list request");
+              ws.send(JSON.stringify({ type: "list" }));
+            }, 100);
             return;
           }
 
           if (data.type === "clients" && Array.isArray(data.items)) {
+            console.log(`Received ${data.items.length} clients`);
             setClients(data.items);
             return;
           }

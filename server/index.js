@@ -234,6 +234,7 @@ wss.on("connection", (ws, req) => {
           JSON.stringify({
             type: "registered",
             clientId: message.clientId,
+            role: role,
             ip: clientAddress,
             time: now,
           })
