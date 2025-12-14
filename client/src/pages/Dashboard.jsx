@@ -638,11 +638,25 @@ export default function Dashboard() {
             p={12}
             textAlign="center"
             boxShadow="0 20px 40px rgba(0,0,0,0.1)">
-            <Text color="#9ca3af" fontSize="lg" fontWeight="500">
+            <Text color="#9ca3af" fontSize="lg" fontWeight="500" mb={2}>
               {searchQuery
                 ? "No clients match your search"
-                : "No clients connected yet"}
+                : wsConnected
+                ? "✅ Panel fonctionnel - Aucun client connecté pour le moment"
+                : "⏳ Connexion au serveur WebSocket..."}
             </Text>
+            {!searchQuery && wsConnected && (
+              <VStack spacing={2} mt={4} align="center">
+                <Text fontSize="sm" color="#6b7280">
+                  Le panel est prêt et attend les connexions clients.
+                </Text>
+                <Text fontSize="xs" color="#9ca3af">
+                  Pour tester : Ouvrez l'application principale dans un autre onglet
+                  <br />
+                  Les clients apparaîtront ici en temps réel
+                </Text>
+              </VStack>
+            )}
           </Box>
         ) : (
           <Box
