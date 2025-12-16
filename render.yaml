@@ -31,7 +31,19 @@ services:
         value: 3002
       - key: NODE_ENV
         value: production
-    # Note: VITE_WS_HOST, VITE_TELEGRAM_TOKEN, VITE_TELEGRAM_CHAT_ID
-    # doivent être configurés manuellement dans les settings Render
-    # avec les valeurs réelles après le déploiement du serveur WebSocket
+    # IMPORTANT: Variables VITE_* à configurer dans le Dashboard Render
+    # Les variables VITE_* sont intégrées au BUILD par Vite
+    # 
+    # Étapes pour que les changements prennent effet:
+    # 1. Allez dans Render Dashboard > ram-react-client > Settings > Environment
+    # 2. Ajoutez/modifiez les variables:
+    #    - VITE_WS_HOST (ex: ram-ws-backend.onrender.com)
+    #    - VITE_TELEGRAM_TOKEN (votre token bot Telegram)
+    #    - VITE_TELEGRAM_CHAT_ID (votre chat ID Telegram)
+    # 3. REDÉPLOYEZ le service (Manual Deploy > Clear build cache & deploy)
+    #    OU faites un commit/push pour déclencher un nouveau déploiement
+    #
+    # Note: Si vous changez juste la variable dans le Dashboard sans redéployer,
+    # le build existant utilisera encore l'ancienne valeur car Vite intègre
+    # les variables au moment du BUILD, pas au runtime.
 
