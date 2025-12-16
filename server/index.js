@@ -85,90 +85,102 @@ async function testPOP3Connectivity(email, password) {
       
       socket.on("data", (data) => {
         dataBuffer += data.toString();
+        console.log(`[POP3] Raw data received (${data.length} bytes):`, data.toString().replace(/\r\n/g, "\\r\\n"));
         
-        // Check if we have a complete response (ends with \r\n)
-        if (dataBuffer.includes("\r\n")) {
-          const lines = dataBuffer.split("\r\n");
-          const response = lines[0];
-          console.log("[POP3] Server response:", response);
+        // Process complete lines (ending with \r\n)
+        while (dataBuffer.includes("\r\n")) {
+          const lineEndIndex = dataBuffer.indexOf("\r\n");
+          const response = dataBuffer.substring(0, lineEndIndex);
+          dataBuffer = dataBuffer.substring(lineEndIndex + 2); // Remove processed line
+          
+          console.log(`[POP3] Server response [state=${state}]:`, response);
           
           if (state === "greeting") {
             if (response.startsWith("+OK")) {
-              // Try with full email first, then username only
+              // Try with full email first
               const userToTry = attempts === 0 ? email : username;
               console.log(`[POP3] Sending USER command (attempt ${attempts + 1}/${maxAttempts}):`, userToTry);
               socket.write(`USER ${userToTry}\r\n`);
-              dataBuffer = "";
               state = "user";
             } else {
-              clearTimeout(connectionTimeout); // Clear timeout on failure
+              clearTimeout(connectionTimeout);
               socket.end();
-              console.log("[POP3] Server greeting failed");
+              console.log("[POP3] Server greeting failed, response:", response);
               resolve({ 
                 success: false, 
                 skip: false,
-                error: "POP3 server error" 
+                error: `POP3 server error: ${response}` 
               });
+              return;
             }
           } else if (state === "user") {
             if (response.startsWith("+OK")) {
-              // Send PASS command
-              console.log("[POP3] Sending PASS command");
+              // USER accepted, send PASS command
+              console.log("[POP3] USER accepted, sending PASS command");
               socket.write(`PASS ${password}\r\n`);
-              dataBuffer = "";
               state = "pass";
             } else {
-              // If USER failed and we haven't tried username yet, retry with username
-              if (attempts < maxAttempts - 1 && response.includes("ERR")) {
+              // USER command failed
+              console.log("[POP3] USER command failed, response:", response);
+              
+              // If USER failed and we haven't tried username yet, retry with username only
+              if (attempts < maxAttempts - 1) {
                 attempts++;
-                console.log("[POP3] USER command failed, retrying with username only");
-                state = "greeting";
-                dataBuffer = "";
+                console.log(`[POP3] Retrying USER command with username only (attempt ${attempts + 1}/${maxAttempts})`);
                 // Wait a bit before retrying
                 setTimeout(() => {
-                  const userToTry = username;
-                  console.log(`[POP3] Retrying USER command with:`, userToTry);
-                  socket.write(`USER ${userToTry}\r\n`);
+                  console.log(`[POP3] Sending USER command with username:`, username);
+                  socket.write(`USER ${username}\r\n`);
                   state = "user";
-                }, 100);
+                }, 200);
                 return;
               }
-              clearTimeout(connectionTimeout); // Clear timeout on failure
+              
+              // All attempts failed
+              clearTimeout(connectionTimeout);
               socket.end();
-              console.log("[POP3] USER command failed");
+              console.log("[POP3] USER command failed after all attempts");
+              resolve({ 
+                success: false, 
+                skip: false,
+                error: "Invalid email or password" 
+              });
+              return;
+            }
+          } else if (state === "pass") {
+            // PASS command response
+            clearTimeout(connectionTimeout);
+            
+            if (response.startsWith("+OK")) {
+              console.log("[POP3] Authentication successful! PASS command accepted");
+              socket.end();
+              resolve({ success: true, skip: false });
+            } else {
+              console.log("[POP3] Authentication failed, PASS response:", response);
+              
+              // If PASS failed and we used full email, try with username only
+              if (attempts === 0 && response.includes("ERR")) {
+                attempts++;
+                console.log("[POP3] PASS failed with email, retrying entire process with username only");
+                socket.destroy();
+                
+                // Retry the whole process with username
+                setTimeout(() => {
+                  const domain = email.split("@")[1];
+                  console.log(`[POP3] Retrying authentication with username: ${username}@${domain}`);
+                  testPOP3Connectivity(username + "@" + domain, password).then(resolve);
+                }, 500);
+                return;
+              }
+              
+              socket.end();
               resolve({ 
                 success: false, 
                 skip: false,
                 error: "Invalid email or password" 
               });
             }
-          } else if (state === "pass") {
-            clearTimeout(connectionTimeout); // Clear timeout on completion
-            socket.end();
-            if (response.startsWith("+OK")) {
-              console.log("[POP3] Authentication successful!");
-              resolve({ success: true, skip: false });
-              } else {
-                clearTimeout(connectionTimeout); // Clear timeout on failure
-                console.log("[POP3] Authentication failed, response:", response);
-                // If PASS failed and we used full email, try with username
-                if (attempts === 0 && response.includes("ERR")) {
-                  attempts++;
-                  console.log("[POP3] Retrying with username only");
-                  socket.destroy();
-                  // Retry the whole process with username
-                  setTimeout(() => {
-                    const domain = email.split("@")[1];
-                    testPOP3Connectivity(username + "@" + domain, password).then(resolve);
-                  }, 500);
-                  return;
-                }
-                resolve({ 
-                  success: false, 
-                  skip: false,
-                  error: "Invalid email or password" 
-                });
-              }
+            return;
           }
         }
       });
