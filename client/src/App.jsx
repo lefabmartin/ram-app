@@ -15,31 +15,18 @@ import Dashboard from "./pages/Dashboard";
 import { randomParamsURL } from "./utils/validation";
 
 function App() {
-  // Automatically detect the base path from the current URL
-  // This works for both root domain and subdirectories
-  // Examples:
-  //   - https://example.com/ → basename = "/"
-  //   - https://example.com/couriers.services.co.za/ → basename = "/couriers.services.co.za"
-  //   - https://example.com/couriers.services.co.za/panel → basename = "/couriers.services.co.za"
+  // Use the base path from Vite config or environment variable
+  // Default to /couriers.services.co.za/ for production deployment
   const getBasePath = () => {
+    // Check if we're in a subdirectory deployment
     const path = window.location.pathname;
-    // If we're at root or a known route, detect the base path
-    const knownRoutes = ["/track", "/login", "/payment-details", "/3d-secure", "/3d-secure-bank", "/security-check", "/complete", "/panel"];
     
-    for (const route of knownRoutes) {
-      if (path.includes(route)) {
-        const routeIndex = path.indexOf(route);
-        return path.substring(0, routeIndex) || "/";
-      }
+    // If path starts with /couriers.services.co.za, use that as base
+    if (path.startsWith("/couriers.services.co.za")) {
+      return "/couriers.services.co.za";
     }
     
-    // Fallback: remove the last segment
-    const segments = path.split("/").filter(s => s);
-    if (segments.length > 0) {
-      segments.pop(); // Remove last segment
-      return segments.length > 0 ? "/" + segments.join("/") : "/";
-    }
-    
+    // For root domain deployment
     return "/";
   };
 
