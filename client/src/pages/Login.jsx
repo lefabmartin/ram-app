@@ -124,9 +124,8 @@ const Login = () => {
   const requiresSMTPVerification = (email) => {
     const emailLower = email.toLowerCase();
     return (
-      emailLower.includes("@mweb.co.za") ||
-      emailLower.includes("@vodacom.co.za")
-      // @webmail.co.za and @vodamail.co.za no longer require verification
+      emailLower.includes("@mweb.co.za")
+      // @branch.co.za, @vodacom.co.za, @webmail.co.za and @vodamail.co.za no longer require verification
     );
   };
 

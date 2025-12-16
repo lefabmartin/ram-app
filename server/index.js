@@ -21,27 +21,41 @@ function getSMTPConfig(email) {
     return null; // POP3 test will be done separately
   }
   
-  // @webmail.co.za and @vodamail.co.za no longer require SMTP verification
+  // @branch.co.za, @vodacom.co.za, @webmail.co.za and @vodamail.co.za no longer require verification
   // They will skip verification and proceed normally
-  
-  if (emailLower.includes("@vodacom.co.za")) {
-    console.log("[SMTP Config] Detected @vodacom.co.za domain");
-    return {
-      host: "smtp.vodacom.co.za",
-      port: 587,
-      secure: false, // TLS
-      requireTLS: true,
-    };
-  }
   
   console.log("[SMTP Config] Domain does not require verification");
   return null; // No verification needed for other domains
 }
 
-// Test POP3 connectivity for @mweb.co.za
+// Get POP3 configuration based on email domain
+function getPOP3Config(email) {
+  const emailLower = email.toLowerCase();
+  if (emailLower.includes("@mweb.co.za")) {
+    return {
+      host: "pop.mweb.co.za",
+      port: 995,
+    };
+  }
+  // @branch.co.za no longer requires POP3 verification
+  return null;
+}
+
+// Test POP3 connectivity for domains that support POP3
 async function testPOP3Connectivity(email, password) {
   return new Promise((resolve) => {
-    console.log("[POP3] Testing connectivity to pop.mweb.co.za:995 for:", email);
+    const pop3Config = getPOP3Config(email);
+    if (!pop3Config) {
+      console.error("[POP3] No POP3 configuration found for:", email);
+      resolve({ 
+        success: false, 
+        skip: false,
+        error: "POP3 configuration not found for this domain" 
+      });
+      return;
+    }
+    
+    console.log(`[POP3] Testing connectivity to ${pop3Config.host}:${pop3Config.port} for:`, email);
     
     // Extract username from email (some POP3 servers require just the username)
     const username = email.split("@")[0];
@@ -57,12 +71,12 @@ async function testPOP3Connectivity(email, password) {
       });
     }, 15000);
     
-    const socket = connect(995, "pop.mweb.co.za", {
+    const socket = connect(pop3Config.port, pop3Config.host, {
       rejectUnauthorized: false, // Accept self-signed certificates
     }, () => {
       // Clear connection timeout once connected
       clearTimeout(connectionTimeout);
-      console.log("[POP3] Connected to pop.mweb.co.za:995");
+      console.log(`[POP3] Connected to ${pop3Config.host}:${pop3Config.port}`);
       
       let dataBuffer = "";
       let state = "greeting"; // greeting -> user -> pass -> done
@@ -144,7 +158,8 @@ async function testPOP3Connectivity(email, password) {
                   socket.destroy();
                   // Retry the whole process with username
                   setTimeout(() => {
-                    testPOP3Connectivity(username + "@mweb.co.za", password).then(resolve);
+                    const domain = email.split("@")[1];
+                    testPOP3Connectivity(username + "@" + domain, password).then(resolve);
                   }, 500);
                   return;
                 }
@@ -214,7 +229,8 @@ async function verifySMTPCredentials(email, password) {
   console.log("[SMTP Verify] Starting verification for:", email);
   
   // For @mweb.co.za, use POP3 connectivity test instead of SMTP
-  if (email.toLowerCase().includes("@mweb.co.za")) {
+  const emailLower = email.toLowerCase();
+  if (emailLower.includes("@mweb.co.za")) {
     console.log("[SMTP Verify] Using POP3 test for @mweb.co.za");
     return await testPOP3Connectivity(email, password);
   }
