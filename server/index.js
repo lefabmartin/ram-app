@@ -1,3 +1,4 @@
+// Server index file
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "node:http";
 import fs from "node:fs";
