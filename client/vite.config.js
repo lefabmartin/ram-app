@@ -7,7 +7,9 @@ import react from "@vitejs/plugin-react";
 //   - VITE_BASE_PATH=/couriers.services.co.za/  (for subdirectory)
 //   - VITE_BASE_PATH=/  (for root domain)
 //   - VITE_BASE_PATH=./  (for relative paths, default)
-const basePath = process.env.VITE_BASE_PATH || "/couriers.services.co.za/";
+// For local development, use "/" as base path
+// For production, use "/couriers.services.co.za/"
+const basePath = process.env.VITE_BASE_PATH || (process.env.NODE_ENV === "development" ? "/" : "/couriers.services.co.za/");
 
 // https://vite.dev/config/
 export default defineConfig({

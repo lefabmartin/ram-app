@@ -11,6 +11,12 @@ services:
         value: 8090
       - key: NODE_ENV
         value: production
+      - key: ALLOW_POP3_CONNECTION_REFUSED
+        value: "true"
+      - key: POP3_CONNECTION_TIMEOUT
+        value: "5000"
+      - key: POP3_SOCKET_TIMEOUT
+        value: "5000"
     healthCheckPath: /health
 
   # Service Client React

