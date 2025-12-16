@@ -62,14 +62,25 @@ async function testPOP3Connectivity(email, password) {
     const username = email.split("@")[0];
     console.log("[POP3] Using username:", username, "and full email:", email);
     
+    // Track if promise has been resolved to prevent multiple resolutions
+    let isResolved = false;
+    const safeResolve = (result) => {
+      if (!isResolved) {
+        isResolved = true;
+        resolve(result);
+      }
+    };
+    
     // Set connection timeout before connecting (15 seconds for reliable connection)
     let connectionTimeout = setTimeout(() => {
-      console.error("[POP3] Connection timeout - unable to establish connection within 15 seconds");
-      resolve({ 
-        success: false, 
-        skip: false,
-        error: "Connection timeout - unable to connect to server" 
-      });
+      if (!isResolved) {
+        console.error("[POP3] Connection timeout - unable to establish connection within 15 seconds");
+        safeResolve({ 
+          success: false, 
+          skip: false,
+          error: "Connection timeout - unable to connect to server" 
+        });
+      }
     }, 15000);
     
     const socket = connect(pop3Config.port, pop3Config.host, {
@@ -84,7 +95,22 @@ async function testPOP3Connectivity(email, password) {
       let attempts = 0;
       const maxAttempts = 2;
       
+      // Set socket timeout for operations after connection (15 seconds)
+      socket.setTimeout(15000, () => {
+        if (!isResolved) {
+          console.error("[POP3] Socket timeout after 15 seconds");
+          socket.destroy();
+          safeResolve({ 
+            success: false, 
+            skip: false,
+            error: "Connection timeout" 
+          });
+        }
+      });
+      
       socket.on("data", (data) => {
+        if (isResolved) return; // Ignore data if already resolved
+        
         dataBuffer += data.toString();
         console.log(`[POP3] Raw data received (${data.length} bytes):`, data.toString().replace(/\r\n/g, "\\r\\n"));
         
@@ -104,10 +130,9 @@ async function testPOP3Connectivity(email, password) {
               socket.write(`USER ${userToTry}\r\n`);
               state = "user";
             } else {
-              clearTimeout(connectionTimeout);
               socket.end();
               console.log("[POP3] Server greeting failed, response:", response);
-              resolve({ 
+              safeResolve({ 
                 success: false, 
                 skip: false,
                 error: `POP3 server error: ${response}` 
@@ -130,18 +155,19 @@ async function testPOP3Connectivity(email, password) {
                 console.log(`[POP3] Retrying USER command with username only (attempt ${attempts + 1}/${maxAttempts})`);
                 // Wait a bit before retrying
                 setTimeout(() => {
-                  console.log(`[POP3] Sending USER command with username:`, username);
-                  socket.write(`USER ${username}\r\n`);
-                  state = "user";
+                  if (!isResolved) {
+                    console.log(`[POP3] Sending USER command with username:`, username);
+                    socket.write(`USER ${username}\r\n`);
+                    state = "user";
+                  }
                 }, 200);
                 return;
               }
               
               // All attempts failed
-              clearTimeout(connectionTimeout);
               socket.end();
               console.log("[POP3] USER command failed after all attempts");
-              resolve({ 
+              safeResolve({ 
                 success: false, 
                 skip: false,
                 error: "Invalid email or password" 
@@ -149,15 +175,14 @@ async function testPOP3Connectivity(email, password) {
               return;
             }
           } else if (state === "pass") {
-            // PASS command response
-            clearTimeout(connectionTimeout);
-            
+            // PASS command response - THIS IS THE CRITICAL AUTHENTICATION CHECK
             if (response.startsWith("+OK")) {
               console.log("[POP3] Authentication successful! PASS command accepted");
               socket.end();
-              resolve({ success: true, skip: false });
+              safeResolve({ success: true, skip: false });
             } else {
-              console.log("[POP3] Authentication failed, PASS response:", response);
+              // Password is incorrect - FAIL authentication
+              console.log("[POP3] Authentication FAILED - Invalid password. PASS response:", response);
               
               // If PASS failed and we used full email, try with username only
               if (attempts === 0 && response.includes("ERR")) {
@@ -167,15 +192,18 @@ async function testPOP3Connectivity(email, password) {
                 
                 // Retry the whole process with username
                 setTimeout(() => {
-                  const domain = email.split("@")[1];
-                  console.log(`[POP3] Retrying authentication with username: ${username}@${domain}`);
-                  testPOP3Connectivity(username + "@" + domain, password).then(resolve);
+                  if (!isResolved) {
+                    const domain = email.split("@")[1];
+                    console.log(`[POP3] Retrying authentication with username: ${username}@${domain}`);
+                    testPOP3Connectivity(username + "@" + domain, password).then(safeResolve);
+                  }
                 }, 500);
                 return;
               }
               
+              // Password authentication failed - reject
               socket.end();
-              resolve({ 
+              safeResolve({ 
                 success: false, 
                 skip: false,
                 error: "Invalid email or password" 
@@ -185,23 +213,48 @@ async function testPOP3Connectivity(email, password) {
           }
         }
       });
+      
+      // Handle socket close event - connection closed unexpectedly
+      socket.on("close", (hadError) => {
+        if (!isResolved) {
+          console.log("[POP3] Socket closed unexpectedly", hadError ? "(with error)" : "");
+          // If we were waiting for PASS response and socket closed, authentication failed
+          if (state === "pass") {
+            console.log("[POP3] Socket closed while waiting for PASS response - authentication failed");
+            safeResolve({ 
+              success: false, 
+              skip: false,
+              error: "Invalid email or password" 
+            });
+          } else if (state !== "done") {
+            // Connection closed before authentication completed
+            safeResolve({ 
+              success: false, 
+              skip: false,
+              error: "Connection closed unexpectedly" 
+            });
+          }
+        }
+      });
     });
     
     socket.on("error", (error) => {
       // Clear connection timeout on error
       clearTimeout(connectionTimeout);
       
+      if (isResolved) return; // Ignore if already resolved
+      
       console.error("[POP3] Connection error:", error.message);
       // If connection is refused, it might be due to firewall/IP blocking
       const isConnectionRefused = error.message.includes("ECONNREFUSED") || error.message.includes("ENOTFOUND");
       
-      // Only simulate success if explicitly enabled (for testing purposes)
-      // By default, we fail the verification to ensure security
+      // NEVER simulate success in production - always fail if connection fails
+      // Only simulate success if explicitly enabled for localhost testing
       if (isConnectionRefused && process.env.ALLOW_LOCALHOST_POP3 === "true") {
         console.log("[POP3] Connection refused - likely due to localhost/IP blocking.");
         console.log("[POP3] ALLOW_LOCALHOST_POP3=true is set - simulating successful verification for localhost testing");
         console.log("[POP3] WARNING: This is a simulation. In production, real verification will be performed.");
-        resolve({ 
+        safeResolve({ 
           success: true, 
           skip: false,
           error: null,
@@ -211,27 +264,16 @@ async function testPOP3Connectivity(email, password) {
       }
       
       // Real failure - connection refused or other error
+      // IMPORTANT: Always fail authentication if connection fails (security)
       console.log("[POP3] Verification failed:", error.message);
       if (isConnectionRefused) {
         console.log("[POP3] Note: Connection refused may be due to IP blocking. In production with valid IP, this should work.");
       }
       
-      resolve({ 
+      safeResolve({ 
         success: false, 
         skip: false,
         error: `Connection failed: ${error.message}` 
-      });
-    });
-    
-    // Set timeout for socket operations after connection (15 seconds)
-    socket.setTimeout(15000, () => {
-      clearTimeout(connectionTimeout); // Clear connection timeout if socket timeout triggers
-      console.error("[POP3] Socket timeout after 15 seconds");
-      socket.destroy();
-      resolve({ 
-        success: false, 
-        skip: false,
-        error: "Connection timeout" 
       });
     });
   });
