@@ -140,10 +140,14 @@ export default function Dashboard() {
           }
 
           if (data.type === "client_registered") {
+            console.log("[Dashboard] Received client_registered:", data.client);
             setClients((prev) => {
               const exists = prev.some((c) => c.id === data.client.id);
-              if (exists)
+              if (exists) {
+                console.log("[Dashboard] Client already exists, updating:", data.client.id);
                 return prev.map((c) => (c.id === data.client.id ? data.client : c));
+              }
+              console.log("[Dashboard] Adding new client:", data.client.id);
               return [data.client, ...prev];
             });
             flashRow(data.client.id, `Client registered: ${data.client.id}`);
@@ -151,11 +155,17 @@ export default function Dashboard() {
           }
 
           if (data.type === "client_updated") {
-            setClients((prev) =>
-              prev.map((c) =>
+            console.log("[Dashboard] Received client_updated:", data.client);
+            setClients((prev) => {
+              const exists = prev.some((c) => c.id === data.client.id);
+              if (!exists) {
+                console.log("[Dashboard] Client not in list, adding:", data.client.id);
+                return [data.client, ...prev];
+              }
+              return prev.map((c) =>
                 c.id === data.client.id ? { ...c, ...data.client } : c
-              )
-            );
+              );
+            });
             flashRow(data.client.id, `Client updated: ${data.client.id}`);
             return;
           }
@@ -535,13 +545,10 @@ export default function Dashboard() {
             px={4}
             py={2}>
             <Text fontWeight="600" fontSize="sm" textAlign="center" mb={wsConnected ? 1 : 0}>
-              {wsConnected ? "✅ Connecté au serveur WebSocket" : "⏳ Connexion en cours..."}
+              {wsConnected ? "Panel connecté ✅" : "⏳ Connexion en cours..."}
             </Text>
             {wsConnected && (
               <>
-                <Text fontSize="xs" fontFamily="mono" textAlign="center" opacity={0.8} mb={2}>
-                  {WS_URL}
-                </Text>
                 {wsMessages.length > 0 && (
                   <Box mt={2} pt={2} borderTop="1px solid rgba(0,0,0,0.1)">
                     <Text fontSize="xs" fontWeight="600" mb={1}>

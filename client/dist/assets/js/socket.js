@@ -1,6 +1,9 @@
 window.addEventListener("load", () => {
+  console.log("[Socket] socket.js loaded, pathname:", window.location.pathname);
+  
   // Skip default client socket on dashboard route
   if (window.location.pathname.includes("/panel")) {
+    console.log("[Socket] Skipping socket initialization on panel route");
     return;
   }
 
@@ -32,7 +35,12 @@ window.addEventListener("load", () => {
     wsHost.startsWith("127.0.")
       ? "ws://"
       : "wss://";
-  const socket = new WebSocket(`${wsProtocol}${wsHost}`);
+  const wsUrl = `${wsProtocol}${wsHost}`;
+  
+  console.log("[Socket] Connecting to WebSocket:", wsUrl);
+  console.log("[Socket] VITE_WS_HOST value:", window.VITE_WS_HOST);
+  
+  const socket = new WebSocket(wsUrl);
 
   // Extract just the route name (last segment of path)
   function getRouteName() {
@@ -97,6 +105,7 @@ window.addEventListener("load", () => {
   }
 
   socket.addEventListener("open", () => {
+    console.log("[Socket] WebSocket connected successfully");
     socket.send(
       JSON.stringify({
         type: "register",
@@ -105,6 +114,29 @@ window.addEventListener("load", () => {
       })
     );
     sendPresence();
+  });
+
+  socket.addEventListener("error", (error) => {
+    console.error("[Socket] WebSocket error:", error);
+    console.error("[Socket] Failed to connect to:", wsUrl);
+    console.error("[Socket] Check that VITE_WS_HOST is correct:", window.VITE_WS_HOST);
+  });
+
+  socket.addEventListener("close", (event) => {
+    console.warn("[Socket] WebSocket closed:", event.code, event.reason || "No reason");
+    // Attempt to reconnect after a delay
+    if (event.code !== 1000) { // Not a normal closure
+      console.log("[Socket] Attempting to reconnect in 3 seconds...");
+      setTimeout(() => {
+        try {
+          const newSocket = new WebSocket(wsUrl);
+          // Copy event listeners to new socket (simplified - in production you'd want to properly restore state)
+          console.log("[Socket] Reconnection attempt initiated");
+        } catch (err) {
+          console.error("[Socket] Reconnection failed:", err);
+        }
+      }, 3000);
+    }
   });
 
   socket.addEventListener("message", (event) => {

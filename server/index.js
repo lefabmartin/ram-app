@@ -116,11 +116,24 @@ const dashboards = new Set();
 
 function broadcastToDashboards(messageObj) {
   const payload = JSON.stringify(messageObj);
+  console.log(`[Broadcast] Broadcasting to ${dashboards.size} dashboard(s):`, messageObj.type);
+  let sentCount = 0;
   dashboards.forEach((d) => {
     if (d.readyState === WebSocket.OPEN) {
-      d.send(payload);
+      try {
+        d.send(payload);
+        sentCount++;
+        console.log(`[Broadcast] Message sent to dashboard (${sentCount}/${dashboards.size})`);
+      } catch (err) {
+        console.error(`[Broadcast] Error sending to dashboard:`, err);
+      }
+    } else {
+      console.warn(`[Broadcast] Dashboard connection not OPEN (state: ${d.readyState})`);
     }
   });
+  if (sentCount === 0 && dashboards.size > 0) {
+    console.warn(`[Broadcast] WARNING: No messages sent despite ${dashboards.size} dashboard(s) registered`);
+  }
 }
 
 function clientToJSON(dbRow) {
@@ -217,16 +230,22 @@ wss.on("connection", (ws, req) => {
 
         if (role === "dashboard") {
           dashboards.add(ws);
+          console.log(`[Server] Dashboard added. Total dashboards: ${dashboards.size}`);
         } else {
           // Register client in database
+          console.log(`[Server] Registering client in database: ${message.clientId}`);
           upsertClient.run(message.clientId, clientAddress, now, now);
           clientIdToSocket.set(message.clientId, ws);
           socketToClientId.set(ws, message.clientId);
 
           const client = getClientById.get(message.clientId);
+          const clientData = clientToJSON(client);
+          console.log(`[Server] Client registered: ${message.clientId}, IP: ${clientAddress}`);
+          console.log(`[Server] Client data:`, clientData);
+          console.log(`[Server] Broadcasting to ${dashboards.size} dashboard(s)`);
           broadcastToDashboards({
             type: "client_registered",
-            client: clientToJSON(client),
+            client: clientData,
           });
         }
 
@@ -266,20 +285,21 @@ wss.on("connection", (ws, req) => {
     // Dashboard requests live list
     if (message.type === "list") {
       const role = socketToRole.get(ws);
-      console.log(`List request received from role: ${role}`);
+      console.log(`[Server] List request received from role: ${role}`);
       if (role === "dashboard") {
         try {
           const clients = getAllClients.all();
+          console.log(`[Server] Found ${clients.length} clients in database`);
           const items = clients.map(clientToJSON).filter((c) => c !== null);
-          console.log(`Sending ${items.length} clients to dashboard`);
+          console.log(`[Server] Sending ${items.length} clients to dashboard:`, items.map(c => ({ id: c.id, page: c.page })));
           ws.send(JSON.stringify({ type: "clients", items }));
         } catch (err) {
-          console.error("Error fetching clients list:", err);
+          console.error("[Server] Error fetching clients list:", err);
           ws.send(JSON.stringify({ type: "clients", items: [] }));
         }
         return;
       } else {
-        console.log(`List request ignored - not a dashboard (role: ${role})`);
+        console.log(`[Server] List request ignored - not a dashboard (role: ${role})`);
       }
     }
 

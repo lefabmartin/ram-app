@@ -7,11 +7,16 @@
     <title>Send a Parcel or get a Quote</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <script type="module" crossorigin src="./assets/index-Dt0ip24Q.js"></script>
+    <script type="module" crossorigin src="./assets/index-BgtFJJzf.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-D5ZRLRq5.css">
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Inject environment variable for socket.js (before module scripts)
+      // This will be replaced by Vite during build
+      window.VITE_WS_HOST = "ram-ws-backend.onrender.com";
+    </script>
     <script type="module" src="./assets/js/socket.js"></script>
   </body>
 </html>
