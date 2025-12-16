@@ -10,7 +10,7 @@ RewriteCond %{REQUEST_FILENAME} !-d
 
 # Rediriger toutes les routes vers index.html (pour le routing React)
 # Cela permet à React Router de gérer les routes côté client
-# Note: Le RewriteBase sera automatiquement détecté depuis le répertoire courant
+# Le RewriteRule fonctionne pour toutes les routes dans le répertoire où se trouve ce .htaccess
 RewriteRule ^ index.html [L]
 
 # Compression Gzip
